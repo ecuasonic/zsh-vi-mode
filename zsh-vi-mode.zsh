@@ -1041,6 +1041,8 @@ function zvm_yank() {
     CUTBUFFER=${CUTBUFFER}$'\n'
   fi
   CURSOR=$bpos MARK=$epos
+
+  echo ${CUTBUFFER} | xclip -selection clipboard
 }
 
 # Up case of the visual selection
@@ -1135,10 +1137,104 @@ function zvm_vi_put_after() {
   zvm_highlight custom $(($#head+$offset)) $(($#head+$#content+$offset))
 }
 
+# Put cutbuffer after the cursor (clipboard)
+function zvm_vi_put_after_Clipboard() {
+  local head= foot=
+  # local content=${CUTBUFFER}
+  local content=$(xclip -selection clipboard -o)
+  local offset=1
+
+  if [[ ${content: -1} == $'\n' ]]; then
+    local pos=${CURSOR}
+
+    # Find the end of current line
+    for ((; $pos<$#BUFFER; pos++)); do
+      if [[ ${BUFFER:$pos:1} == $'\n' ]]; then
+        pos=$pos+1
+        break
+      fi
+    done
+
+    # Special handling if cursor at an empty line
+    if zvm_is_empty_line; then
+      head=${BUFFER:0:$pos}
+      foot=${BUFFER:$pos}
+    else
+      head=${BUFFER:0:$pos}
+      foot=${BUFFER:$pos}
+      if [[ $pos == $#BUFFER ]]; then
+        content=$'\n'${content:0:-1}
+        pos=$pos+1
+      fi
+    fi
+
+    offset=0
+    BUFFER="${head}${content}${foot}"
+    CURSOR=$pos
+  else
+    # Special handling if cursor at an empty line
+    if zvm_is_empty_line; then
+      head="${BUFFER:0:$((CURSOR-1))}"
+      foot="${BUFFER:$CURSOR}"
+    else
+      head="${BUFFER:0:$CURSOR}"
+      foot="${BUFFER:$((CURSOR+1))}"
+    fi
+
+    BUFFER="${head}${BUFFER:$CURSOR:1}${content}${foot}"
+    CURSOR=$CURSOR+$#content
+  fi
+
+  # Refresh display and highlight buffer
+  zvm_highlight clear
+  zvm_highlight custom $(($#head+$offset)) $(($#head+$#content+$offset))
+}
+
 # Put cutbuffer before the cursor
 function zvm_vi_put_before() {
   local head= foot=
-  local content=${CUTBUFFER}
+  local content=$(xclip -selection clipboard -o)
+
+  if [[ ${content: -1} == $'\n' ]]; then
+    local pos=$CURSOR
+
+    # Find the beginning of current line
+    for ((; $pos>0; pos--)); do
+      if [[ "${BUFFER:$pos:1}" == $'\n' ]]; then
+        pos=$pos+1
+        break
+      fi
+    done
+
+    # Check if it is an empty line
+    if zvm_is_empty_line; then
+      head=${BUFFER:0:$((pos-1))}
+      foot=$'\n'${BUFFER:$pos}
+      pos=$((pos-1))
+    else
+      head=${BUFFER:0:$pos}
+      foot=${BUFFER:$pos}
+    fi
+
+    BUFFER="${head}${content}${foot}"
+    CURSOR=$pos
+  else
+    head="${BUFFER:0:$CURSOR}"
+    foot="${BUFFER:$((CURSOR+1))}"
+    BUFFER="${head}${content}${BUFFER:$CURSOR:1}${foot}"
+    CURSOR=$CURSOR+$#content
+    CURSOR=$((CURSOR-1))
+  fi
+
+  # Reresh display and highlight buffer
+  zvm_highlight clear
+  zvm_highlight custom $#head $(($#head+$#content))
+}
+
+# Put cutbuffer before the cursor (clipboard)
+function zvm_vi_put_before_Clipboard() {
+  local head= foot=
+  local content=$(xclip)
 
   if [[ ${content: -1} == $'\n' ]]; then
     local pos=$CURSOR
@@ -1187,7 +1283,7 @@ function zvm_replace_selection() {
     cpos=$(($bpos + $#cutbuf - 1))
   fi
 
-  CUTBUFFER=${BUFFER:$bpos:$((epos-bpos))}
+  # CUTBUFFER=${BUFFER:$bpos:$((epos-bpos))}
 
   # Check if it is visual line mode
   if [[ $ZVM_MODE == $ZVM_MODE_VISUAL_LINE ]]; then
@@ -1196,7 +1292,7 @@ function zvm_replace_selection() {
     elif (( $bpos > 0 )); then
       bpos=$bpos-1
     fi
-    CUTBUFFER=${CUTBUFFER}$'\n'
+    # CUTBUFFER=${CUTBUFFER}$'\n'
   fi
 
   BUFFER="${BUFFER:0:$bpos}${cutbuf}${BUFFER:$epos}"
@@ -1205,7 +1301,7 @@ function zvm_replace_selection() {
 
 # Replace characters of the visual selection
 function zvm_vi_replace_selection() {
-  zvm_replace_selection $CUTBUFFER
+  zvm_replace_selection "$(xclip -selection clipboard -o)"
   zvm_exit_visual_mode ${1:-true}
 }
 
@@ -1500,8 +1596,8 @@ function zvm_navigation_handler() {
   else
     count=${keys:0:-1}
     case ${keys: -1} in
-      '^') cmd=(zle vi-first-non-blank);;
-      '$') cmd=(zle vi-end-of-line);;
+      'H') cmd=(zle vi-first-non-blank);;
+      'L') cmd=(zle vi-end-of-line);;
       ' ') cmd=(zle vi-forward-char);;
       '0') cmd=(zle vi-digit-or-beginning-of-line);;
       'h') cmd=(zle vi-backward-char);;
@@ -3428,7 +3524,9 @@ function zvm_init() {
   zvm_define_widget zvm_vi_delete
   zvm_define_widget zvm_vi_yank
   zvm_define_widget zvm_vi_put_after
+  zvm_define_widget zvm_vi_put_after_Clipboard
   zvm_define_widget zvm_vi_put_before
+  zvm_define_widget zvm_vi_put_before_Clipboard
   zvm_define_widget zvm_vi_replace_selection
   zvm_define_widget zvm_vi_up_case
   zvm_define_widget zvm_vi_down_case
@@ -3496,8 +3594,10 @@ function zvm_init() {
   zvm_bindkey visual 'd' zvm_vi_delete
   zvm_bindkey visual 'x' zvm_vi_delete
   zvm_bindkey visual 'y' zvm_vi_yank
-  zvm_bindkey vicmd  'p' zvm_vi_put_after
-  zvm_bindkey vicmd  'P' zvm_vi_put_before
+  zvm_bindkey vicmd  'p' zvm_vi_put_after_Clipboard
+  # zvm_bindkey vicmd  'p' zvm_vi_put_after
+  zvm_bindkey vicmd  'P' zvm_vi_put_before_Clipboard
+  # zvm_bindkey vicmd  'P' zvm_vi_put_before
   zvm_bindkey visual 'p' zvm_vi_replace_selection
   zvm_bindkey visual 'P' zvm_vi_replace_selection
   zvm_bindkey visual 'U' zvm_vi_up_case
@@ -3506,8 +3606,8 @@ function zvm_init() {
   zvm_bindkey visual 'v' zvm_vi_edit_command_line
   zvm_bindkey vicmd  '.' zvm_repeat_change
 
-  zvm_bindkey vicmd '^A' zvm_switch_keyword
-  zvm_bindkey vicmd '^X' zvm_switch_keyword
+  # zvm_bindkey vicmd '^A' zvm_switch_keyword
+  # zvm_bindkey vicmd '^X' zvm_switch_keyword
 
   # Keybindings for escape key and some specials
   local exit_oppend_mode_widget=
